@@ -11,6 +11,7 @@ add_library(lib
     src/opengl_helper.hpp
     src/left09.cpp
     src/left09.hpp
+    src/shader.hpp
 )
 
 add_executable(main src/main.cpp)
