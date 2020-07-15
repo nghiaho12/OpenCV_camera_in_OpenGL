@@ -47,14 +47,22 @@ int main(void)
     // NOTE: glm is column first then row
     glm::mat4 camera_matrix(1.0);
 
+    // typical 3x3 camera matrix but as 4x4 instead
     camera_matrix[0][0] = fx;
     camera_matrix[1][1] = fy;
     camera_matrix[2][0] = cx;
     camera_matrix[2][1] = cy;
 
-    // This is a trick to transform [x, y, z, 1] to [x, y, z, z]
-    // OpenGL divides by the very last element in the pipeline
-    // So [x, y, z, z] becomes [x/z, y/z, 1, 1]
+    // The typical formulation for projecting a 3D point to 2D is
+    // P = camera_matrix(3x3) * transform(3x4) * 3D_point(4x1)
+    // Where P = [x, y, z]. Dividing by z returns the 2D homogenous image point [x/z, y/z, 1].
+    //
+    // However, in OpenGL points are represented as [x, y, z, w], and the division is by the last element w (usually w=1).
+    // To replicate the above behaviour we make a slight modification to the 4x4 camera matrix.
+    // Such that when you do
+    // P = camera_matrix(4x4) * transform(4x4) * 3D_point(4x1)
+    // P = [x, y, z, z]. Dividing by the last element will return [x/z, y/z, 1, 1], which is the 2D homogenous image point we ant.
+
     camera_matrix[2][3] = 1;
     camera_matrix[3][3] = 0;
 
