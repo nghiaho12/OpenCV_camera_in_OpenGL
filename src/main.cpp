@@ -35,7 +35,7 @@ int main(void)
     constexpr float square_size = 0.02;
     constexpr float board_width = 8 * square_size;
     constexpr float board_height = 5 * square_size;
-    constexpr float board_depth = 0.05;
+    constexpr float board_depth = 0.07;
 
     // NOTE: We assume undistortion is already applied to the image eg. cv::undistort
     // Hence we don't use any distortion value in this example.
@@ -52,19 +52,6 @@ int main(void)
     camera_matrix[1][1] = fy;
     camera_matrix[2][0] = cx;
     camera_matrix[2][1] = cy;
-
-    // The typical formulation for projecting a 3D point to 2D is
-    // P = camera_matrix(3x3) * transform(3x4) * 3D_point(4x1)
-    // Where P = [x, y, z]. Dividing by z returns the 2D homogenous image point [x/z, y/z, 1].
-    //
-    // However, in OpenGL points are represented as [x, y, z, w], and the division is by the last element w (usually w=1).
-    // To replicate the above behaviour we make a slight modification to the 4x4 camera matrix.
-    // Such that when you do
-    // P = camera_matrix(4x4) * transform(4x4) * 3D_point(4x1)
-    // P = [x, y, z, z]. Dividing by the last element will return [x/z, y/z, 1, 1], which is the 2D homogenous image point we ant.
-
-    camera_matrix[2][3] = 1;
-    camera_matrix[3][3] = 0;
 
     // extrinsics for opencv/samples/data/left09.jpg
     glm::mat4 board_pose(1.0);
@@ -123,8 +110,10 @@ int main(void)
 
     GLuint vertex_array;
     GLuint vertex_buffer;
-    GLuint cuboid_vertex_buffer;
     GLuint texture_buffer;
+    GLuint cuboid_vertex_buffer;
+    GLuint cuboid_color_buffer;
+    GLuint cuboid_index_buffer;
 
     GL_CHECK(glGenVertexArrays(1, &vertex_array));
     GL_CHECK(glBindVertexArray(vertex_array));
@@ -145,30 +134,53 @@ int main(void)
     GL_CHECK(glEnableVertexAttribArray(0));
     GL_CHECK(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, nullptr));
 
-    // vertices for the wireframe cuboid overlay
+    // cuboid model
     w = board_width;
     h = board_height;
 
     const float cuboid_vertices[] = {
-        0, 0, 0, w, 0, 0,
-        w, 0, 0, w, h, 0,
-        w, h, 0, 0, h, 0,
-        0, h, 0, 0, 0, 0,
+        0, 0, 0,
+        w, 0, 0,
+        w, h, 0,
+        0, h, 0,
+        0, 0, -board_depth,
+        w, 0, -board_depth,
+        w, h, -board_depth,
+        0, h, -board_depth};
 
-        0, 0, -board_depth, w, 0, -board_depth,
-        w, 0, -board_depth, w, h, -board_depth,
-        w, h, -board_depth, 0, h, -board_depth,
-        0, h, -board_depth, 0, 0, -board_depth,
+    const float cuboid_color[] = {
+        1.0, 0.0, 0.0, 0.5,
+        1.0, 0.0, 0.0, 0.5,
+        1.0, 0.0, 0.0, 0.5,
+        1.0, 0.0, 0.0, 0.5,
+        0.0, 1.0, 0.0, 0.5,
+        0.0, 1.0, 0.0, 0.5,
+        0.0, 1.0, 0.0, 0.5,
+        0.0, 1.0, 0.0, 0.5};
 
-        0, 0, 0, 0, 0, -board_depth,
-        w, 0, 0, w, 0, -board_depth,
-        w, h, 0, w, h, -board_depth,
-        0, h, 0, 0, h, -board_depth,
-    };
+    const uint32_t cuboid_triangle_indices[] = {
+        0, 1, 2,
+        0, 2, 3,
+        0, 1, 4,
+        1, 4, 5,
+        1, 2, 6,
+        6, 5, 1,
+        0, 4, 7,
+        0, 3, 7,
+        2, 3, 7,
+        2, 6, 7};
 
     GL_CHECK(glGenBuffers(1, &cuboid_vertex_buffer));
     GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, cuboid_vertex_buffer));
     GL_CHECK(glBufferData(GL_ARRAY_BUFFER, sizeof(cuboid_vertices), cuboid_vertices, GL_STATIC_DRAW));
+
+    GL_CHECK(glGenBuffers(1, &cuboid_color_buffer));
+    GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, cuboid_color_buffer));
+    GL_CHECK(glBufferData(GL_ARRAY_BUFFER, sizeof(cuboid_color), cuboid_color, GL_STATIC_DRAW));
+
+    GL_CHECK(glGenBuffers(1, &cuboid_index_buffer));
+    GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cuboid_index_buffer));
+    GL_CHECK(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cuboid_triangle_indices), cuboid_triangle_indices, GL_STATIC_DRAW));
 
     // load the texture
     GL_CHECK(glGenTextures(1, &texture_buffer));
@@ -193,6 +205,7 @@ int main(void)
     GLuint texture_shader = loadShaders(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER);
 
     GL_CHECK(glEnableVertexAttribArray(0));
+    GL_CHECK(glEnableVertexAttribArray(1));
 
     while (!glfwWindowShouldClose(window)) {
         int width, height;
@@ -202,9 +215,12 @@ int main(void)
         GL_CHECK(glViewport(0, 0, width, height));
         GL_CHECK(glClear(GL_COLOR_BUFFER_BIT));
 
-        // NOTE: MUST cast as float else this will be treated as int and will silently do something unexpected!
-        // Also we flip the y-axis so (0,0) is at the top left corner of the viewport
-        glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f);
+        // OpenGL convention, -z is into the screen
+        constexpr float zNear = 0.0;
+        constexpr float zFar = -10;
+
+        // Flip the y-axis so (0,0) is at the top left corner of the viewport
+        glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, zNear, zFar);
 
         // Draw the texture
         GL_CHECK(glUseProgram(texture_shader));
@@ -218,13 +234,28 @@ int main(void)
         GL_CHECK(glBindTexture(GL_TEXTURE_2D, 0));
 
         // Draw the cuboid
-        glm::mat4 mvp = projection * camera_matrix * board_pose; // this is where the magic happens!
+        GL_CHECK(glEnable(GL_DEPTH_TEST));
+        GL_CHECK(glClear(GL_DEPTH_BUFFER_BIT));
+
+        GL_CHECK(glEnable(GL_BLEND));
+        GL_CHECK(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+
         GL_CHECK(glUseProgram(vertex_shader));
-        GL_CHECK(glUniformMatrix4fv(glGetUniformLocation(vertex_shader, "mvp"), 1, GL_FALSE, glm::value_ptr(mvp)));
+        GL_CHECK(glUniformMatrix4fv(glGetUniformLocation(vertex_shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection)));
+        GL_CHECK(glUniformMatrix4fv(glGetUniformLocation(vertex_shader, "camera"), 1, GL_FALSE, glm::value_ptr(camera_matrix)));
+        GL_CHECK(glUniformMatrix4fv(glGetUniformLocation(vertex_shader, "model"), 1, GL_FALSE, glm::value_ptr(board_pose)));
 
         GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, cuboid_vertex_buffer));
         GL_CHECK(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr));
-        GL_CHECK(glDrawArrays(GL_LINES, 0, 24));
+
+        GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, cuboid_color_buffer));
+        GL_CHECK(glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, nullptr));
+
+        GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cuboid_index_buffer));
+        GL_CHECK(glDrawElements(GL_TRIANGLES, sizeof(cuboid_triangle_indices)/sizeof(cuboid_triangle_indices[0]),  GL_UNSIGNED_INT , 0));
+
+        GL_CHECK(glDisable(GL_DEPTH_TEST));
+        GL_CHECK(glDisable(GL_BLEND));
 
         glfwSwapBuffers(window);
         glfwPollEvents();

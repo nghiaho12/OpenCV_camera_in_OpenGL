@@ -2,28 +2,40 @@
 
 #include <string>
 
-// Very basic vertex shader
 static const std::string VERTEX_SHADER = R"###(
 #version 330 core
 layout(location = 0) in vec3 vertexPosition;
+layout(location = 1) in vec4 vertexColor;
 
-uniform mat4 mvp;
-
-void main()
-{
-    gl_Position = mvp * vec4(vertexPosition, 1);
-}
-)###";
-
-// Fixed color fragment shader
-static const std::string FRAGMENT_SHADER = R"###(
-#version 330 core
-
+uniform mat4 projection;
+uniform mat4 camera;
+uniform mat4 model;
 out vec4 color;
 
 void main()
 {
-    color = vec4(1.0, 0.0, 0.0, 1.0);
+    // project to 2d
+    vec4 v = camera * model * vec4(vertexPosition, 1);
+
+    // NOTE: v.z is left untounched to maintain depth information!
+    v.xy /= v.z;
+
+    // To NDC
+    gl_Position = projection * v;
+
+    color = vertexColor;
+}
+)###";
+
+static const std::string FRAGMENT_SHADER = R"###(
+#version 330 core
+
+in vec4 color;
+out vec4 out_color;
+
+void main()
+{
+    out_color = color;
 }
 )###";
 
